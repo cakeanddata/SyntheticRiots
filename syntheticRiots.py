@@ -21,12 +21,10 @@ incident_types = {
     "Riot": ["residential area", "shop front", "transport hub", "council/government office", "city centre"]
 }
 
-sources = ["PSNI", "School", "MEARS"]
 severity_levels = ["Low", "Moderate", "High", "Severe"]
 start_date = datetime(2025, 3, 1)
 weeks = 52
 
-# Assign numeric severity weights
 incident_severity_base = {incident: i for i, incident in enumerate(incident_types.keys())}
 incident_location_severity = {
     incident: {loc: i for i, loc in enumerate(locs)}
@@ -42,9 +40,7 @@ for week in range(weeks):
         area = random.choice(areas)
         incident = random.choice(list(incident_types.keys()))
         location_type = random.choice(incident_types[incident])
-        source = random.choice(sources)
 
-        # Validate logical combinations
         if incident == "House Attack":
             location_type = "residential area"
         elif incident == "School Bullying":
@@ -52,27 +48,24 @@ for week in range(weeks):
         elif incident == "Business Attack":
             location_type = "shop or business"
 
-# Riot escalation logic — only allow riot if lagged predictors present
-if incident == "Riot":
-    graffiti_lag_week = week - 4
-    poster_lag_week = week - 2
+        # Riot escalation logic
+        if incident == "Riot":
+            graffiti_lag_week = week - 4
+            poster_lag_week = week - 2
 
-    graffiti_in_area = (area, "Graffiti", graffiti_lag_week) in incident_history
-    poster_in_area = (area, "Threat Poster", poster_lag_week) in incident_history
+            graffiti_in_area = (area, "Graffiti", graffiti_lag_week) in incident_history
+            poster_in_area = (area, "Threat Poster", poster_lag_week) in incident_history
 
-    # Check bullying with weak response in last ~6 weeks
-    recent_bullying_weak = any(
-        dp['Incident_Type'] == "School Bullying" and
-        dp['Area_Code'] == area and
-        dp.get('Response_Strength') in ["None", "Weak"]
-        for dp in data[-60:]  # Covers roughly 6 weeks of entries
-    )
+            recent_bullying_weak = any(
+                dp['Incident_Type'] == "School Bullying" and
+                dp['Area_Code'] == area and
+                dp.get('Response_Strength') in ["None", "Weak"]
+                for dp in data[-60:]
+            )
 
-    if not (graffiti_in_area and poster_in_area and recent_bullying_weak):
-        continue  # Skip generating this Riot if predictors aren't met
+            if not (graffiti_in_area and poster_in_area and recent_bullying_weak):
+                continue
 
-
-        # Weighted severity score
         base_weight = incident_severity_base[incident]
         loc_weight = incident_location_severity[incident][location_type]
         severity_score = base_weight * 10 + loc_weight
@@ -86,14 +79,23 @@ if incident == "Riot":
         else:
             severity = np.random.choice(severity_levels, p=[0.3, 0.3, 0.25, 0.15])
 
-        # Escalation Event logic
+        # Assign source
+        if incident == "School Bullying" or (incident in ["Protest", "Graffiti", "Threat Poster"] and location_type == "school"):
+            source = "School"
+        elif incident == "House Attack":
+            source = "MEARS"
+        elif severity == "Severe":
+            source = "PSNI"
+        else:
+            source = random.choice(["PSNI", "MEARS"])
+
+        # Escalation Event
         lag_weeks = [week - 4, week - 5]
         lagged_graffiti = sum(
             1 for lag in lag_weeks if (area, "Graffiti", lag) in incident_history
         )
         escalation_event = 1 if lagged_graffiti >= 2 and incident in ["Protest", "House Attack"] else 0
 
-        # Bullying response strength
         if incident == "School Bullying":
             if severity == "Severe":
                 response_strength = np.random.choice(["None", "Weak", "Moderate", "Strong"], p=[0.4, 0.3, 0.2, 0.1])
@@ -119,35 +121,4 @@ if incident == "Riot":
         incident_history[(area, incident, week)] = 1
 
 df = pd.DataFrame(data)
-
-import ace_tools as tools; tools.display_dataframe_to_user(name="Riot Prediction Dataset with Escalation Logic", dataframe=df)
-
-
-
-import openai
-
-def generate_description(row):
-    prompt = (
-        f"Generate a short, incident-report style summary (1–2 sentences) for the following event:\n\n"
-        f"- Date: {row['Date']}\n"
-        f"- Location: {row['Location_Type']} at postcode {row['Area_Code']}\n"
-        f"- Incident Type: {row['Incident_Type']}\n"
-        f"- Severity: {row['Severity']}\n"
-        f"- Source of Report: {row['Source']}\n\n"
-        f"Write clearly and concisely, in the tone of a police or community incident report."
-    )
-
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",  # or "gpt-3.5-turbo"
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.5,
-            max_tokens=100
-        )
-        return response['choices'][0]['message']['content'].strip()
-    except Exception as e:
-        return f"[Description generation failed: {str(e)}]"
-
-# Apply function to generate descriptions
-df['Incident_Description'] = df.apply(generate_description, axis=1)
-
+import ace_tools as tools; tools.display_dataframe_to_user(name="Cleaned Simulated Incident Data", dataframe=df)
